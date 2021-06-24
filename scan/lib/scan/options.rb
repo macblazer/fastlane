@@ -37,6 +37,16 @@ module Scan
                                        UI.user_error!("Project file invalid") unless File.directory?(v)
                                        UI.user_error!("Project file is not a project file, must end with .xcodeproj") unless v.include?(".xcodeproj")
                                      end),
+        FastlaneCore::ConfigItem.new(key: :package,
+                                     optional: true,
+                                     env_name: "SCAN_PACKAGE",
+                                     description: "Path to the Package.swift file",
+                                     verify_block: proc do |value|
+                                       v = File.expand_path(value.to_s)
+                                       UI.user_error!("Package file not found at path '#{v}'") unless File.exist?(v)
+                                       UI.user_error!("Package file invalid") if File.directory?(v)
+                                       UI.user_error!("Packge file is not a swift file, must end with .swift") unless v.include?(".swift")
+                                     end),
         FastlaneCore::ConfigItem.new(key: :scheme,
                                      short_option: "-s",
                                      optional: true,
