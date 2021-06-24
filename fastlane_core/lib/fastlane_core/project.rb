@@ -7,7 +7,7 @@ module FastlaneCore
   # Represents an Xcode project
   class Project # rubocop:disable Metrics/ClassLength
     class << self
-      # Project discovery
+      # Project/Package.swift discovery
       def detect_projects(config)
         if config[:workspace].to_s.length > 0 && config[:project].to_s.length > 0
           UI.user_error!("You can only pass either a workspace or a project path, not both")
@@ -37,7 +37,14 @@ module FastlaneCore
           end
         end
 
-        if config[:workspace].nil? && config[:project].nil?
+        if config[:workspace].to_s.length == 0 && config[:project].to_s.length == 0
+          package = File.new("./Package.swift", "r") if File::exists?("./Package.swift")
+          if !package.nil?
+            config[:package] = package.path
+          end
+        end
+
+        if config[:workspace].nil? && config[:project].nil? && config[:package].nil?
           select_project(config)
         end
       end
@@ -68,15 +75,19 @@ module FastlaneCore
     # Is this project a workspace?
     attr_accessor :is_workspace
 
+    # Is this project a Swift Package Manager package?
+    attr_accessor :is_package
+
     # @param options [FastlaneCore::Configuration|Hash] a set of configuration to run xcodebuild to work out build settings
     # @param xcodebuild_list_silent [Boolean] a flag to silent xcodebuild command's output
     # @param xcodebuild_suppress_stderr [Boolean] a flag to supress output to stderr from xcodebuild
     def initialize(options)
       @options = options
-      @path = File.expand_path(self.options[:workspace] || self.options[:project])
+      @path = File.expand_path(self.options[:workspace] || self.options[:project] || self.options[:package])
       @is_workspace = (self.options[:workspace].to_s.length > 0)
+      @is_package = (self.options[:package].to_s.length > 0)
 
-      if !path || !File.directory?(path)
+      if !path || (!File.directory?(path) && !File.exists?(path))
         UI.user_error!("Could not find project at path '#{path}'")
       end
     end
@@ -98,6 +109,10 @@ module FastlaneCore
       self.is_workspace
     end
 
+    def package?
+      self.is_package
+    end
+
     def project_name
       if is_workspace
         return File.basename(options[:workspace], ".xcworkspace")
@@ -116,7 +131,7 @@ module FastlaneCore
 
     # returns the Xcodeproj::Project or nil if it is a workspace
     def project
-      return nil if workspace?
+      return nil if (workspace? || package?)
       @project ||= Xcodeproj::Project.open(path)
     end
 
@@ -130,6 +145,16 @@ module FastlaneCore
                          v.include?("Pods/Pods.xcodeproj")
                        end.keys
                      end
+                   elsif package?
+                     packageName = nil
+                     File.open(path, "r") do |file_handle|
+                       file_handle.each_line(path) do |line|
+                         /name:\s*"(?<packageName>\w+)"/ =~ line
+                       end
+                     end
+                     schemes = Array.new()
+                     schemes.append("#{packageName}-Package") unless packageName.nil?
+                     schemes
                    else
                      Xcodeproj::Project.schemes(path)
                    end
@@ -379,6 +404,16 @@ module FastlaneCore
             UI.user_error!("Could not find any schemes for Xcode workspace at path '#{self.path}'. Please make sure that the schemes you want to use are marked as `Shared` from Xcode.")
           end
           options[:scheme] ||= schemes.first
+        end
+
+        if is_package && key == "SUPPORTED_PLATFORMS"
+          text = File.read(self.path).strip.gsub(/\s+/, " ")
+          platforms = ""
+          platforms += "macosx" if /platforms:\s*\[.*\.macOS\(.+\]/ =~ text
+          platforms += " iphoneos" if /platforms:\s*\[.*\.iOS\(.+\]/ =~ text
+          platforms += " appletvos" if /platforms:\s*\[.*\.tvOS\(.+\]/ =~ text
+          platforms += " watchos" if /platforms:\s*\[.*\.watchOS\(.+\]/ =~ text
+          return platforms
         end
 
         # SwiftPM support
